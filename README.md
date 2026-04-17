@@ -72,7 +72,6 @@ The ROSAME experimental pipeline is designed to support a full workflow from pro
     
   **Pseudo-code Example:**
     ```python
-    experiment = ExperimentRunner(domain_file)
 
     for num_traj in NUM_OF_TRAJ_LIST:
         for fold in FOLDS:
