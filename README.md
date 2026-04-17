@@ -24,15 +24,6 @@ The original ROSAME framework combines:
   Adapted version of ROSAME with modifications including enhanced state encoding and extended visualization and logging capabilities.
 
 - **Complete Experimental Pipeline:**  
-  - **Problem Generator:**  
-    Parses PDDL domain and problem files to extract types, predicates, propositions, and an action order dictionary.  
-    Two modes are available:
-    - Using a custom generator function.
-    - Using grounded predicates with `Predicate.ground()` (specific to ROSAME).
-  
-  - **Trace Generator:**  
-    Generates trajectories (state-action traces) from the domain and problem files.
-  
   - **Learning Phase:**  
     The ROSAME algorithm processes the generated trajectories:
     - **Trajectory Grounding:** Prepares raw data using `ground_new_trajectory()`.
