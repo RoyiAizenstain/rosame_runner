@@ -162,3 +162,103 @@ score        = MSE(predicted_s2, actual_s2)   # averaged over propositions
 Steps where `score > threshold` are flagged as noisy and dropped before passing to MA-SAM+.
 
 **Implementation note for `score_steps`:** call `rosame_runner.rosame.build(agent_action_index)` once per agent in the step (not once per step), accumulate the product, then compute MSE. Use `torch.no_grad()` — this is inference only, no backprop.
+
+### MA-ROSAME Algorithm (Pseudocode)
+
+```
+ALGORITHM MA-ROSAME
+INPUT:
+    domain_path          — PDDL domain file
+    trajectory_paths     — list of multi-agent trajectory files
+    problem_path         — PDDL problem file
+    agents               — list of agent names ["a1", "a2", ...]
+    noise_threshold τ    — MSE cutoff (e.g. 0.1)
+    epochs               — ROSAME training epochs
+
+OUTPUT:
+    learned_domain       — PDDL action model
+    report               — safe/unsafe action summary
+    macro_mapping        — macro action bindings
+
+═══════════════════════════════════════════════════════════════
+PHASE 1 — PARSE
+═══════════════════════════════════════════════════════════════
+
+domain  ← DomainParser(domain_path)
+problem ← ProblemParser(problem_path, domain)
+
+for each traj in trajectory_paths:
+    MA_obs[traj] ← TrajectoryParser.parse(traj, executing_agents=agents)
+    // returns MultiAgentObservation with joint steps
+
+═══════════════════════════════════════════════════════════════
+PHASE 2 — TRAIN ROSAME  (single-agent surrogate)
+═══════════════════════════════════════════════════════════════
+
+rosame ← Rosame_Runner(domain_path, problem)
+
+for each traj in trajectory_paths:
+    // Extract pseudo-single-agent steps
+    for each step in MA_obs[traj]:
+        a_first ← first non-NOP action in step.joint_actions
+        SA_steps[traj] ← (step.s1, a_first, step.s2)
+
+    rosame.learn(SA_steps[traj], epochs)
+    // trains MLP per action schema via:
+    // loss = MSE(s1*(1-del) + (1-s1)*add, s2)
+    //      + MSE((1-s1)*pre, 0)
+    //      + 0.2 * MSE(pre, 1)
+
+═══════════════════════════════════════════════════════════════
+PHASE 3 — SCORE STEPS  (joint multi-agent loss)  ← NEW
+═══════════════════════════════════════════════════════════════
+
+for each traj in trajectory_paths:
+    for each step k in MA_obs[traj]:
+        s1 ← encode(step.previous_state)   // binary proposition vector
+        s2 ← encode(step.next_state)
+
+        // Initialise product accumulators
+        complement_add ← ones(n_propositions)
+        complement_del ← ones(n_propositions)
+
+        for each agent action aᵢ in step.operational_actions:
+            _, addeff_i, deleff_i ← rosame.build(aᵢ)  // no backprop
+            complement_add ← complement_add ⊙ (1 - addeff_i)
+            complement_del ← complement_del ⊙ (1 - deleff_i)
+
+        // Product-of-complements: P(at least one agent causes effect)
+        joint_add ← 1 - complement_add
+        joint_del ← 1 - complement_del
+
+        // Predict next state under joint action
+        predicted_s2 ← s1 ⊙ (1 - joint_del) + (1 - s1) ⊙ joint_add
+
+        score[traj][k] ← MSE(predicted_s2, s2)
+
+═══════════════════════════════════════════════════════════════
+PHASE 4 — FILTER NOISY STEPS
+═══════════════════════════════════════════════════════════════
+
+for each traj in trajectory_paths:
+    clean_steps[traj] ← { k : score[traj][k] ≤ τ }
+    cleaned_obs[traj] ← MA_obs[traj].keep(clean_steps[traj])
+
+═══════════════════════════════════════════════════════════════
+PHASE 5 — SYMBOLIC LEARNING  (MA-SAM+)
+═══════════════════════════════════════════════════════════════
+
+learner ← MASAMPlus(domain)
+learned_domain, report, macro_mapping ←
+    learner.learn_combined_action_model_with_macro_actions(cleaned_obs)
+
+═══════════════════════════════════════════════════════════════
+PHASE 6 — EXPORT
+═══════════════════════════════════════════════════════════════
+
+write learned_domain.to_pddl() → output file
+
+return learned_domain, report, macro_mapping
+```
+
+The novel contribution is Phase 3 — the joint multi-agent loss via product-of-complements. Phases 2 and 5 reuse existing algorithms unchanged.
