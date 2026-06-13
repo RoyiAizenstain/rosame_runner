@@ -36,3 +36,10 @@ htmlcov/
 # Learned model output
 *.log
 learned_*.pddl
+
+# Pyright / Pylance
+pyrightconfig.json
+
+# Temp / runtime
+tmp/
+temp/
